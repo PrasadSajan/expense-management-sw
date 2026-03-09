@@ -72,7 +72,7 @@ function Navigation({ session, role }: { session: any, role: string }) {
           </div>
           <button 
             onClick={handleLogout}
-            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0 opacity-0 group-hover:opacity-100"
+            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
             title="Log out"
           >
             <LogOut size={16} />
