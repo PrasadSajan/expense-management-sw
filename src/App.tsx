@@ -7,6 +7,7 @@ import NewClaim from './pages/NewClaim'
 import ClaimDetails from './pages/ClaimDetails'
 import Login from './pages/Login'
 import AdminDashboard from './pages/AdminDashboard'
+import UpdatePassword from './pages/UpdatePassword'
 
 function Navigation({ session, role }: { session: any, role: string }) {
   const location = useLocation()
@@ -100,6 +101,7 @@ function App() {
   const [session, setSession] = useState<any>(null)
   const [role, setRole] = useState<string>('EMPLOYEE')
   const [isLoading, setIsLoading] = useState(true)
+  const [isRecovery, setIsRecovery] = useState(false)
 
   const fetchRole = async (userId: string) => {
     try {
@@ -123,6 +125,9 @@ function App() {
     // 1. Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
+      if (window.location.hash.includes('type=recovery')) {
+        setIsRecovery(true)
+      }
       if (session) {
         fetchRole(session.user.id)
       } else {
@@ -133,7 +138,10 @@ function App() {
     // 2. Listen for auth changes (login/logout)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecovery(true)
+      }
       setSession(session)
       if (session) {
         fetchRole(session.user.id)
@@ -154,6 +162,13 @@ function App() {
         </div>
       </div>
     )
+  }
+
+  if (isRecovery) {
+    return <UpdatePassword onComplete={() => {
+      setIsRecovery(false)
+      window.location.hash = ''
+    }} />
   }
 
   // If no session, FORCE login screen
