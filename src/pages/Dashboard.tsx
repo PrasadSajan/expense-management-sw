@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PlusCircle, Receipt, FileText, ChevronRight } from 'lucide-react'
+import { PlusCircle, Receipt, FileText, ChevronRight, XCircle, Briefcase } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 interface Claim {
@@ -8,12 +8,15 @@ interface Claim {
   title: string
   status: string
   total_amount: number
+  approved_amount?: number
   created_at: string
 }
 
 export default function Dashboard() {
   const [claims, setClaims] = useState<Claim[]>([])
   const [loading, setLoading] = useState(true)
+  const [role, setRole] = useState('EMPLOYEE')
+  const [pendingReviews, setPendingReviews] = useState(0)
 
   useEffect(() => {
     fetchClaims()
@@ -23,6 +26,18 @@ export default function Dashboard() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not authenticated')
+
+      const { data: roleData } = await supabase.from('user_roles').select('role').eq('user_id', user.id).single()
+      if (roleData) {
+        setRole(roleData.role)
+        if (roleData.role === 'MANAGER') {
+          const { count } = await supabase
+            .from('claims')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'SUBMITTED')
+          setPendingReviews(count || 0)
+        }
+      }
 
       const { data, error } = await supabase
         .from('claims')
@@ -42,6 +57,8 @@ export default function Dashboard() {
   const drafts = claims.filter(c => c.status === 'DRAFT').length
   const pending = claims.filter(c => c.status === 'SUBMITTED').length
   const approved = claims.filter(c => c.status === 'APPROVED')
+    .reduce((sum, c) => sum + Number(c.total_amount), 0)
+  const rejected = claims.filter(c => c.status === 'REJECTED')
     .reduce((sum, c) => sum + Number(c.total_amount), 0)
 
   return (
@@ -81,6 +98,32 @@ export default function Dashboard() {
             </p>
           </div>
         </div>
+        <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm flex items-center space-x-4">
+          <div className="bg-red-50 text-red-600 p-3 rounded-xl"><XCircle size={24} /></div>
+          <div>
+            <p className="text-slate-500 text-sm font-medium">Total Rejected</p>
+            <p className="text-2xl font-bold text-slate-800">
+              {loading ? '...' : `₹${rejected.toLocaleString()}`}
+            </p>
+          </div>
+        </div>
+        {role === 'MANAGER' && (
+          <Link to="/admin" className="bg-slate-900 rounded-2xl p-6 shadow-sm flex items-center space-x-4 hover:bg-slate-800 transition-colors group cursor-pointer">
+            <div className="bg-slate-800 text-slate-300 p-3 rounded-xl group-hover:text-white transition-colors"><Briefcase size={24} /></div>
+            <div>
+              <p className="text-slate-400 text-sm font-medium">Pending Team Reviews</p>
+              <div className="flex items-center space-x-2">
+                <p className="text-2xl font-bold text-white">{loading ? '...' : pendingReviews}</p>
+                {pendingReviews > 0 && (
+                  <span className="flex h-3 w-3 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </Link>
+        )}
       </div>
       
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -117,12 +160,13 @@ export default function Dashboard() {
                   <div className="flex items-center space-x-3 text-sm text-slate-500">
                     <span>{new Date(claim.created_at).toLocaleDateString()}</span>
                     <span>•</span>
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      claim.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                      claim.status === 'APPROVED' ? (claim.approved_amount !== undefined && claim.approved_amount !== null && claim.approved_amount < claim.total_amount ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-700') :
+                      claim.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
                       claim.status === 'SUBMITTED' ? 'bg-orange-100 text-orange-700' :
                       'bg-slate-100 text-slate-700'
                     }`}>
-                      {claim.status}
+                      {claim.status === 'APPROVED' ? (claim.approved_amount !== undefined && claim.approved_amount !== null && claim.approved_amount < claim.total_amount ? 'PARTIALLY APPROVED' : 'APPROVED') : claim.status}
                     </span>
                   </div>
                 </div>

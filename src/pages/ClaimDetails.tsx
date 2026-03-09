@@ -17,6 +17,8 @@ interface Claim {
   title: string
   status: string
   total_amount: number
+  approved_amount?: number
+  manager_notes?: string
   user_id: string
 }
 
@@ -39,6 +41,7 @@ export default function ClaimDetails() {
   // Upload & Submit state
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [managerReview, setManagerReview] = useState<{ action: 'APPROVED' | 'REJECTED', amount: string, notes: string } | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -232,23 +235,47 @@ export default function ClaimDetails() {
     }
   }
 
-  const handleUpdateStatus = async (newStatus: 'APPROVED' | 'REJECTED') => {
-    if (!id || !claim) return
+  const handleConfirmReview = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !claim || !managerReview) return
     
-    if (!confirm(`Are you sure you want to ${newStatus.toLowerCase()} this claim?`)) return
+    const approvedAmount = parseFloat(managerReview.amount)
+    
+    // VALIDATION
+    if (managerReview.action === 'APPROVED' && approvedAmount < claim.total_amount && !managerReview.notes.trim()) {
+      alert("Please provide a reason for the partial approval.")
+      return
+    }
+    if (managerReview.action === 'REJECTED' && !managerReview.notes.trim()) {
+      alert("Please provide a reason for rejecting the claim.")
+      return
+    }
     
     try {
       setSubmitting(true)
+      const finalAmount = managerReview.action === 'APPROVED' ? approvedAmount : 0
+      const finalNotes = managerReview.notes.trim() || null
+      
       const { error } = await supabase
         .from('claims')
-        .update({ status: newStatus })
+        .update({ 
+          status: managerReview.action,
+          approved_amount: finalAmount,
+          manager_notes: finalNotes
+        })
         .eq('id', id)
         
       if (error) throw error
       
-      setClaim({ ...claim, status: newStatus })
+      setClaim({ 
+        ...claim, 
+        status: managerReview.action,
+        approved_amount: finalAmount,
+        manager_notes: finalNotes || undefined
+      })
+      setManagerReview(null)
     } catch (error) {
-      console.error(`Error updating claim status to ${newStatus}:`, error)
+      console.error(`Error updating claim status:`, error)
       alert("Failed to update claim status.")
     } finally {
       setSubmitting(false)
@@ -262,6 +289,7 @@ export default function ClaimDetails() {
   const isOwner = currentUser?.id === claim.user_id
   const isManager = userRole === 'MANAGER'
   const isDraft = claim.status === 'DRAFT' && isOwner
+  const isPartiallyApproved = claim.status === 'APPROVED' && claim.approved_amount !== undefined && claim.approved_amount !== null && claim.approved_amount < claim.total_amount
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
@@ -275,12 +303,12 @@ export default function ClaimDetails() {
           <div>
             <div className="flex items-center space-x-3 mb-1">
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                claim.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                claim.status === 'APPROVED' ? (isPartiallyApproved ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-700') :
                 claim.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
                 claim.status === 'SUBMITTED' ? 'bg-orange-100 text-orange-700' :
                 'bg-slate-100 text-slate-700'
               }`}>
-                {claim.status}
+                {isPartiallyApproved ? 'PARTIALLY APPROVED' : claim.status}
               </span>
             </div>
             <h1 className="text-2xl font-bold text-slate-800">{claim.title}</h1>
@@ -311,28 +339,113 @@ export default function ClaimDetails() {
           )}
 
           {/* Manager Action Buttons */}
-          {claim.status === 'SUBMITTED' && isManager && (
+          {claim.status === 'SUBMITTED' && isManager && !managerReview && (
             <div className="flex items-center space-x-3 mt-2">
               <button 
-                onClick={() => handleUpdateStatus('REJECTED')}
-                disabled={submitting}
-                className="flex items-center space-x-2 bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
+                onClick={() => setManagerReview({ action: 'REJECTED', amount: '0', notes: '' })}
+                className="flex items-center space-x-2 bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
+                <XCircle size={16} />
                 <span>Reject</span>
               </button>
               <button 
-                onClick={() => handleUpdateStatus('APPROVED')}
-                disabled={submitting}
-                className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm shadow-green-600/20 disabled:opacity-50"
+                onClick={() => setManagerReview({ action: 'APPROVED', amount: claim.total_amount.toString(), notes: '' })}
+                className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm shadow-green-600/20"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                <CheckCircle size={16} />
                 <span>Approve Claim</span>
               </button>
             </div>
           )}
         </div>
       </div>
+
+      {/* Manager Feedback Banner (For Employees & Managers after review) */}
+      {(claim.status === 'APPROVED' || claim.status === 'REJECTED') && (
+        <div className={`p-6 rounded-2xl border ${
+          claim.status === 'APPROVED' ? (isPartiallyApproved ? 'bg-yellow-50 border-yellow-200' : 'bg-green-50 border-green-200') : 'bg-red-50 border-red-200'
+        }`}>
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+            <div>
+              <h3 className={`font-bold text-lg mb-1 ${claim.status === 'APPROVED' ? (isPartiallyApproved ? 'text-yellow-800' : 'text-green-800') : 'text-red-800'}`}>
+                {claim.status === 'APPROVED' ? (isPartiallyApproved ? 'Claim Partially Approved' : 'Claim Approved') : 'Claim Rejected'}
+              </h3>
+              {claim.manager_notes && (
+                <p className={`text-sm ${claim.status === 'APPROVED' ? (isPartiallyApproved ? 'text-yellow-700' : 'text-green-700') : 'text-red-700'}`}>
+                  <strong>Manager Notes:</strong> {claim.manager_notes}
+                </p>
+              )}
+            </div>
+            <div className={`text-right text-sm bg-white/50 p-4 rounded-xl ${claim.status === 'APPROVED' ? (isPartiallyApproved ? 'text-yellow-900 border border-yellow-200/50' : 'text-green-900 border border-green-200/50') : 'text-red-900 border border-red-200/50'}`}>
+              <div className="flex justify-between gap-8 mb-1"><span>Total Claimed:</span> <strong>₹{Number(claim.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></div>
+              <div className="flex justify-between gap-8 mb-1"><span>Approved:</span> <strong>₹{Number(claim.approved_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></div>
+              <div className="flex justify-between gap-8 pt-1 border-t border-black/10"><span>Rejected:</span> <strong>₹{Number(claim.total_amount - (claim.approved_amount || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manager Review Form Panel */}
+      {managerReview && (
+        <div className="bg-white border border-slate-200 shadow-sm p-6 rounded-2xl mt-6 animate-in slide-in-from-top-4 fade-in">
+          <h3 className="text-xl font-bold text-slate-800 mb-6">
+            {managerReview.action === 'APPROVED' ? 'Approve Claim' : 'Reject Claim'}
+          </h3>
+          <form onSubmit={handleConfirmReview} className="space-y-5">
+            {managerReview.action === 'APPROVED' && (
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Approved Amount (₹)</label>
+                <input 
+                  type="number" 
+                  step="0.01"
+                  required
+                  value={managerReview.amount} 
+                  onChange={e => setManagerReview({...managerReview, amount: e.target.value})}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                />
+                {parseFloat(managerReview.amount) < claim.total_amount && (
+                  <p className="text-sm font-medium text-orange-600 mt-2">You are partially approving this claim. A reason is mandatory.</p>
+                )}
+              </div>
+            )}
+            <div>
+               <label className="block text-sm font-semibold text-slate-700 mb-1">
+                 Reason / Notes {((managerReview.action === 'REJECTED') || (managerReview.action === 'APPROVED' && parseFloat(managerReview.amount) < claim.total_amount)) && <span className="text-red-500">*</span>}
+               </label>
+               <textarea 
+                 rows={3}
+                 value={managerReview.notes}
+                 onChange={e => setManagerReview({...managerReview, notes: e.target.value})}
+                 placeholder="Please provide feedback to the employee..."
+                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+               />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button 
+                type="button" 
+                onClick={() => setManagerReview(null)}
+                className="px-5 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl text-sm font-semibold transition-colors"
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                disabled={submitting}
+                className={`flex items-center space-x-2 px-6 py-2.5 text-white rounded-xl text-sm font-semibold transition-all shadow-sm disabled:opacity-50 ${
+                  managerReview.action === 'APPROVED' ? 'bg-green-600 hover:bg-green-700 shadow-green-600/20' : 'bg-red-600 hover:bg-red-700 shadow-red-600/20'
+                }`}
+              >
+                {submitting ? (
+                  <><Loader2 size={16} className="animate-spin" /> <span>Saving...</span></>
+                ) : (
+                  <><span>Confirm {managerReview.action === 'APPROVED' ? 'Approval' : 'Rejection'}</span></>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-800">Expense Items</h2>
